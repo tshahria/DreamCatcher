@@ -1,36 +1,42 @@
 
 <?php
-    /**
-     * Copyright 2016 Google Inc.
-     *
+    /*
      * Licensed under the Apache License, Version 2.0 (the "License");
      * you may not use this file except in compliance with the License.
      * You may obtain a copy of the License at
      *
-     *     http://www.apache.org/licenses/LICENSE-2.0
-     *
-     * Unless required by applicable law or agreed to in writing, software
-     * distributed under the License is distributed on an "AS IS" BASIS,
-     * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-     * See the License for the specific language governing permissions and
-     * limitations under the License.
+     * http://www.apache.org/licenses/LICENSE-2.0
      */
-    # [START vision_quickstart]
-    # Includes the autoloader for libraries installed with composer
 
     require __DIR__ . '/vendor/autoload.php';
-    # Imports the Google Cloud client library
+    
+    //Imports the Google Cloud client library
     use Google\Cloud\Vision\VisionClient;
     use Google\Cloud\Storage\StorageClient;
     use PhpFanatic\clarifAI\ImageClient;
 
-    $projectId = 'Google Project Id';
+    //Path to the image for analysis
     $path = $_GET['link'];
 
-    $serviceAccountPath = 'path to your credential json file';
-    $bucket = 'name of the google sotrage bucket to store the pictures';
+    //User ID
+    if(isset($_GET['userID'])){
+        $userID = $_GET['userID'];
+    }else{
+        $userID = "";s
+    }
 
-    function detect_face($projectId, $serviceAccountPath, $path)
+    //Google Vision API and Storage Bucket Info
+    $projectId = 'Google Project Id';
+    $bucket = 'name of the google sotrage bucket to store the pictures';
+    $serviceAccountPath = 'path to your credential json file';
+
+    //Clarfai API Info
+    $clarfaiAPI = 'Clarifai API Key';
+    $clarfaiModelName = 'Clarifai Model Name';
+
+
+    //Functions that uses Google Vision API to get the vertices of the faces of an image
+    function detect_face()
     {
         $config = [
             'keyFilePath' => $serviceAccountPath,
@@ -39,11 +45,6 @@
         $vision = new VisionClient($config);
         $image = $vision->image(file_get_contents($path), ['FACE_DETECTION']);
         $result = $vision->annotate($image);
-        # [END detect_face]
-        //print("Faces:\n");
-        //foreach ((array) $result->faces() as $face) {
-           
-        //}
         $arrR = (array)$result;
         reset($arrR);
         $key = array_keys($arrR)[0];
@@ -52,62 +53,77 @@
         foreach ($attributesArr as $tempA) {
             array_push($bPolyArrays, $tempA["boundingPoly"]);
         }
-        //var_dump($keys);
-        //var_dump($bPolyArrays);
         return $bPolyArrays;
     }
     
 
-    function genPic($pathName, $xStart, $yStart, $xSize, $ySize){
+    //Functions to genetare picture in Base64 format and get the cropped faces in an image
+    function generatePicB64($pathName, $xStart, $yStart, $xSize, $ySize){
         $filename = $pathName;
         $im = imagecreatefromjpeg($filename);
         $im2 = imagecrop($im, ['x' => $xStart, 'y' => $yStart, 'width' => $xSize, 'height' => $ySize]);
         if ($im2 !== FALSE) {
-            ob_start(); // Let's start output buffering.
-            imagejpeg($im2); //This will normally output the image, but because of ob_start(), it won't.
-            $contents = ob_get_contents(); //Instead, output above is saved to $contents
-            ob_end_clean(); //End the output buffer.
-            
+            ob_start(); 
+            imagejpeg($im2); 
+            $contents = ob_get_contents(); 
+            ob_end_clean();             
             $dataUri = "data:image/jpeg;base64," . base64_encode($contents);        
         }else{
             echo"failed";
         }
-        //var_dump($dataUri);
         return $dataUri;
     }
 
-    function upload_object($pid, $sap, $bucketName, $objectName, $source)
+    function getCroppedImage($bPA){
+        $dataArr = array();
+        for ($i=0; $i < sizeof($bPA); $i++) { 
+            $vx1 = $bPA[$i]["vertices"][0]["x"];
+            $vy1 = $bPA[$i]["vertices"][0]["y"];
+            $vx2 = $bPA[$i]["vertices"][1]["x"];
+            $vy2 = $bPA[$i]["vertices"][1]["y"];
+            $vx3 = $bPA[$i]["vertices"][2]["x"];
+            $vy3 = $bPA[$i]["vertices"][2]["y"];
+            $vx4 = $bPA[$i]["vertices"][3]["x"];
+            $vy4 = $bPA[$i]["vertices"][3]["y"];
+            $xlen = abs($vx2-$vx1);
+            $ylen = abs($vy3-$vy1);
+            $dataTempURI = generatePicB64($path, $vx1, $vy1, $xlen, $ylen);
+            array_push($dataArr, $dataTempURI);
+        }
+        return $dataArr;
+    }
+
+
+    //Functions for Uploading Objects to Google Storage Bucket
+    function upload_object($objectName, $source)
     {
         $config = [
-            'keyFilePath' => $sap,
-            'projectId' => $pid,
+            'keyFilePath' => $serviceAccountPath,
+            'projectId' => $projectId,
         ];
         $storage = new StorageClient($config);
-        //echo "$source";
         $file = fopen($source, 'r');
-        //var_dump($file);
-        $bucket = $storage->bucket($bucketName);
+        $bucket = $storage->bucket($bucket);
         $object = $bucket->upload($file, [
             'name' => $objectName
         ]);
         $object2 = $bucket->object($objectName);
         $object2->update(['acl' => []], ['predefinedAcl' => 'PUBLICREAD']);
-        //printf('Uploaded %s to gs://%s/%s' . PHP_EOL, basename($source), $bucketName, $objectName);
     }
 
-    function uploadBatchToGS($dataA,$pid,$sap,$bk){
+    function uploadBatchToGS($dataA){
         $arr = array();
         for ($i=0; $i <sizeof($dataA) ; $i++) { 
-            $objName = "testPic".($i+1).".jpg";
-            //echo "$objName";
-            upload_object($pid, $sap, $bk, $objName, $dataA[$i]);
+            $objName = "P -" . $userID. "-" .($i+1).".jpg";
+            upload_object($objName, $dataA[$i]);
             array_push($arr, $objName);
         }
         return $arr;
     }
        
+    //Functions for analyzing a batch of images of people (awake vs sleeping) 
     function batchCAnalysis($objList){
-        $client = new ImageClient('Clarifai API Key');
+        $client = new ImageClient($clarfaiAPI);
         $totalScore = 0;
         $totalSleepScore = 0;
         $totalEngageScore = 0;
@@ -115,9 +131,9 @@
         $avgEngageScore = 0;
         $objLsize = sizeof($objList);
         for ($i=0; $i < $objLsize; $i++) {
-            $imgLink = "https://storage.googleapis.com/[name of the storage bucketyou use]/" . $objList[$i];
+            $imgLink = "https://storage.googleapis.com/". $bucket ."/" . $objList[$i];
             $client->AddImage($imgLink);
-            $result = $client->Predict('Clarifai Model Name');
+            $result = $client->Predict($clarfaiModelName);
             $arrResult = (array)((array)(((array)json_decode($result))['outputs'])[0]);
             $arr2 = (array)(((array)$arrResult['data'])['concepts']);
             if(strcmp(((array)$arr2[0])['id'],"sleeping")){
@@ -129,8 +145,7 @@
             }
             //var_dump($arr2); 
             //echo "sleepyScore $i : $sleepyScore";
-            //echo "engageScore $i: $engageScore";
-            
+            //echo "engageScore $i: $engageScore";            
             $totalScore += ($sleepyScore+$engageScore);
             $totalSleepScore += $sleepyScore;
             $totalEngageScore += $engageScore;
@@ -142,49 +157,29 @@
         $analysisArray = array( 'avgSleepScore' => $avgSleepScore*100,
                                 'avgEngageScore' => $avgEngageScore*100,
                                 'percentSleepScore' => $percentSleepScore,
-                                'percentEngageScore' => $percentEngageScore);
-        
-    //    var_dump($analysisArray);
+                                'percentEngageScore' => $percentEngageScore);        
         return $analysisArray;
     }
 
-    $bPA = detect_face($projectId, $serviceAccountPath, $path);
-    $dataArr = array();
-    for ($i=0; $i < sizeof($bPA); $i++) { 
-        $vx1 = $bPA[$i]["vertices"][0]["x"];
-        $vy1 = $bPA[$i]["vertices"][0]["y"];
-        $vx2 = $bPA[$i]["vertices"][1]["x"];
-        $vy2 = $bPA[$i]["vertices"][1]["y"];
-        $vx3 = $bPA[$i]["vertices"][2]["x"];
-        $vy3 = $bPA[$i]["vertices"][2]["y"];
-        $vx4 = $bPA[$i]["vertices"][3]["x"];
-        $vy4 = $bPA[$i]["vertices"][3]["y"];
-        $xlen = abs($vx2-$vx1);
-        $ylen = abs($vy3-$vy1);
-        $dataTempURI = genPic($path, $vx1, $vy1, $xlen, $ylen);
-        array_push($dataArr, $dataTempURI);
-    }
-    $resultLinkArr = uploadBatchToGS($dataArr,$projectId,$serviceAccountPath,$bucket);
-    $batchArr = batchCAnalysis($resultLinkArr);
-    //var_dump(%batchArr);
+    //function deteleBatch($nameArr)
+
+    //function drawFaces($img, $vertices)
+    //F: img -> img with face rectangles
+
+    $vertexJson = detect_face();
+    $finalAnalysis = batchCAnalysis(uploadBatchToGS(getCroppedImage($vertexJson)));
+    //var_dump($finalAnalysis);
 ?>
 <html>
 <head>
     <style type="text/css">
-        body{text-align: center;background: #f2f6f8;}
+        body{text-align: center;}
         .img{position:absolute;z-index:1;}
-
         #container{
             display:inline-block;
-            width:320px; 
-            height:480px;
-            margin: 0 auto; 
-            background: black; 
-            position:relative; 
-            border:5px solid black; 
-            border-radius: 10px; 
-            box-shadow: 0 5px 50px #333}
-
+            width:1920px; 
+            height:1080px;
+           }
         #myCanvas{
             position:relative;
             z-index:20;
@@ -194,15 +189,15 @@
 </head>
 <body>
     <script type="text/javascript">
-        <?php echo "var barr = " . json_encode($batchArr) . ";";?>
-        console.log(barr);
+        <?php echo "var fAnalysis = " . json_encode($finalAnalysis) . ";";?>
+        console.log(fAnalysis);
     </script>
         <div class="container">
             <img class="img" src="<?php echo"$path"?>">
-            <canvas id="myCanvas" width="2000" height="2000">
+            <canvas id="myCanvas" width="1920" height="1080">
             <script type="text/javascript">
                 <?php
-                    $js_array = json_encode($bPA);
+                    $js_array = json_encode($vertexJson);
                     echo "var jArr = ". $js_array . ";\n";
                 ?>
                 var ctx=document.getElementById("myCanvas").getContext("2d");
@@ -217,7 +212,6 @@
                     var tempValy4 = jArr[i]["vertices"][3]["y"];
                     var xlen = Math.abs(tempValx2-tempValx1);
                     var ylen = Math.abs(tempValy3-tempValy1);
-                    //console.log(ylen);
                     ctx.rect(tempValx1,tempValy1,xlen,ylen);
                     ctx.strokeStyle="#00FF00";
                     ctx.stroke();
